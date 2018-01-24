@@ -1,7 +1,7 @@
 package main;
 use strict;
 use warnings;
-use diagnostics;
+#use diagnostics;
 use utf8;
 use lib './FHEM';
 use FHCore qw ( :all );
