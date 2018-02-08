@@ -784,21 +784,17 @@ defaultConnect {
   });
 }
 
-#TODO class setIOSelect !!!
-sub 
-enableIO {
+sub enableIO {
   my ($self) = @_;
-  #tie $self->{directWriteFn}, 'DirectWriteBindig', $self;
-  $self->getParent()->setIOSelect($self);
+  $self->setIOSelect($self);
   return $self;
-}
+};
 
-sub 
-disableIO {
+sub disableIO {
   my ($self) = @_;
-  $self->getParent()->removeIOSelect($self);
+  $self->removeIOSelect($self);
   return $self;
-}
+};
   
   
 ###############################################################################
@@ -807,7 +803,6 @@ disableIO {
 package GenConnect;
 use strict;
 use warnings;
-use diagnostics;
 use utf8;
 use Socket qw( :DEFAULT inet_pton :addrinfo );
 use Fcntl;
@@ -931,6 +926,77 @@ connect {
 #  return undef;
 #}
 
+
+###############################################################################
+package PosixSerialConnect;
+use strict;
+use warnings;
+use utf8;
+use Scalar::Util qw( weaken );
+use Fcntl;
+use POSIX qw(:termios_h);
+use lib './FHEM';
+use FHCore qw ( :all );
+use parent -norequire, qw ( Base );
+
+sub setUp {
+  my ($self, %args) = @_;
+  my %events = ( 
+    'onConnect'     =>  'defaultConnect',
+    'onError'       =>  'defaultError',
+    'onTimeout'     =>  'defaultTimeout',
+  );
+
+  foreach my $k (keys %events) {
+    $self->mapEvent($k, $args{$k}) if exists $args{$k}; # map if given by args
+    $self->bindEvent($k, $events{$k}); # set default handler
+  };
+  $self->Item('IP') = $args{'IP'} if exists $args{'IP'};
+  $self->Item('PORT') = $args{'PORT'} if exists $args{'PORT'};
+  return $self;
+};
+
+#http://hasyweb.desy.de/services/computing/perl/node138.html
+sub connect 
+{
+  my ($self) = @_;
+  $self->SysLog(EXT_DEBUG|LOG_COMMAND, 'connect');
+  my $fh;
+  if (not sysopen ($fh, '/dev/ttyACM3', O_NONBLOCK|O_RDWR)) {
+    $self->fireEvent('onError', {
+    });
+    $self->SysLog(EXT_DEBUG|LOG_ERROR, 'open failed');
+  };
+  my $term = POSIX::Termios->new;
+  if (not $term->getattr(fileno($fh))) {
+    $self->fireEvent('onError', {
+    });
+    $self->SysLog(EXT_DEBUG|LOG_ERROR, 'getattr failed');
+  };
+  $term->setospeed( 4097 );
+  $term->setispeed( 4097 );
+  $term->setattr( fileno($fh), &POSIX::TCSAFLUSH );
+  POSIX::tcflush( fileno($fh), &POSIX::TCIOFLUSH );
+  $self->fireEvent('onConnect', {
+    'FH'  => $fh,
+  });
+};
+
+###############################################################################
+package SerialConnect;
+use strict;
+use warnings;
+use utf8;
+use Scalar::Util qw( weaken );
+use lib './FHEM';
+use FHCore qw ( :all );
+use parent -norequire, qw ( Base );
+
+sub new {
+  my ($type, %args) = @_;
+  return new PosixSerialConnect(%args);
+};
+
 ###############################################################################
 package DirectWriteBindig;
 use strict;
@@ -973,7 +1039,7 @@ use POSIX;
 use Fcntl;
 use Scalar::Util qw( weaken );
 use FHCore qw( :all );
-our @ISA = qw( Core Handler GenSys );
+use parent -norequire, qw ( Base );
 
 sub
 setUp {
@@ -1031,16 +1097,14 @@ sub
 enableIO {
   my ($self) = @_;
   #tie $self->{directWriteFn}, 'DirectWriteBindig', $self;
-  $self->getParent()->setIOSelect($self);
+  $self->setIOSelect($self);
   return $self;
 }
 
-#TODO class functions ?
 sub 
 disableIO {
   my ($self) = @_;
-  my $parent = $self->{'.FHLib'}->{'PARENT'};
-  $parent->removeIOSelect($self);
+  $self->removeIOSelect($self);
   return $self;
 }
 
@@ -1058,7 +1122,7 @@ defaultRawRead {
   my $fb = $event->{INBUFFER};
   my $msg;
   my $rv = sysread $fh, $msg, POSIX::BUFSIZ;
-  #$self->SysLog ('DEBUG', "defaultRawRead '%s'", $msg);
+  $self->SysLog (LOG_DEBUG, "defaultRawRead '%s'", $msg);
   if (not defined($rv)) {
     if (my $err = $!) {
       $self->fireEvent('onError', {

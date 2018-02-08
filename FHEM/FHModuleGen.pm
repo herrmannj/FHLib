@@ -1,30 +1,19 @@
 package Modul;
-#use strict;
-#use warnings;
-#use Scalar::Util qw( weaken );
-#use utf8;
-#require FHCore;
-#use FHLayer qw( Test );
-
 use strict;
 use warnings;
-use diagnostics;
 use utf8;
 use Scalar::Util qw( blessed refaddr weaken );
 use lib './FHEM';
 use FHCore qw ( :all );
-use FHLayer qw( Test );
-use parent -norequire, qw ( CoreAsync );
-
-#our @ISA = qw( Core Handler Timer );
-#our @ISA = qw( Core );
+#use FHLayer qw( Test );
+use parent -norequire, qw ( Base );
 
 sub
 Init {
   my ($p, $fname, $line) = caller;
   my $name = getModuleName($fname);
   main::Log3 (undef, 1, "modul $name Init");
-  my $_Define = sub {
+  my $_Define = sub { # TODO obsolete !!!!!!!!!!!!!!!!!!!!!!
     my ($hash, $def) = @_;
     my ($devName, $devType, $options) = split(/ /, $def, 3);
     # convenient interface to legacy methods
@@ -105,7 +94,16 @@ Init {
             my ($channel, $event) = @_;
             $o->_subscribe($channel, $event);
           };
-        }
+          *{$name.'::readingsSingleUpdate'} = sub {
+            my ($self, $reading, $value, $dotrigger)= @_;
+            main::readingsSingleUpdate($hash, $reading, $value, $dotrigger);
+          };
+        };
+        # consume options
+        while ($options && ((my $option, $options) = split /\s/, $options, 2)) {
+          $o->configure($option, $options);
+        };
+        $o->validateDefinition();
         $o->run() if $main::init_done;
         return;
       };
@@ -159,6 +157,20 @@ setTimer {
  main::InternalTimer($tim, $fn, $elemTimer);
 };
 
+sub setIOSelect {
+  my ($self, $elemIO) = @_;
+  my $eCLID = $elemIO->getCLID;
+  $self->SysLog(EXT_DEBUG|LOG_ERROR, 'set IO module level CLID:%s NAME:%s',$elemIO->getCLID, $elemIO->getName );
+  $main::selectlist{"FHLIB_$eCLID"} = $elemIO;
+};
+
+sub removeIOSelect {
+  my ($self, $elemIO) = @_;
+  my $eCLID = $elemIO->getCLID;
+  $self->SysLog(EXT_DEBUG|LOG_ERROR, 'remove IO module level CLID:%s NAME:%s',$elemIO->getCLID, $elemIO->getName );
+  delete $main::selectlist{"FHLIB_$eCLID"};
+};
+
 sub
 configure {
   my ($self, $option, $options) = @_;
@@ -187,7 +199,7 @@ run {
 sub
 _doGet {
   my ($self, $getName, @options) = @_;
-  print "get called with $getName @options \n";
+  print "get called with $getName @options \n"; # TODO 
   if ($getName eq 'webif-data') {
     use Data::Dumper;
     my $s = $options[0];
