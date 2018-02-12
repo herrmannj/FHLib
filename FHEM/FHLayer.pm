@@ -1,24 +1,32 @@
 package FHLayer;
 use strict;
 use warnings;
-use diagnostics;
 use utf8;
+use Sys::Hostname;
 use lib './FHEM';
 use FHCore qw( :all );
 
 sub
 import {
-  my ($f) = @_; # main or thread
+  my ($lib, @param) = @_; # main or thread
   my $c = caller(); # TODO return if $c ne 'modul';
+   
+  # should not happen:
+  if (exists($main::defs{'distributor'})) {
+    main::Log3(undef, 1, "distributor already installed");
+    return;
+  };
   
-  # test if main::defs{'MULTIPLEXER'} exists, else return
+  my $host = (exists($ENV{'FHLIB_HOOST'}) and $ENV{'FHLIB_HOOST'})?$ENV{'FHLIB_HOOST'}:hostname;
   my $distributor = $main::defs{'distributor'} =  new FHDistributor((
     'NAME'  => 'distributor',
+    'HOST'  =>  $host,
   ));
-  my $Connector = $distributor->setElement(new FHConnector((
-    'NAME'  => 'FHConnector'
-  )));
-  
+  # my $Connector = $distributor->setElement(new FHConnector((
+  #  'NAME'  => 'FHConnector'
+  # )));
+  return;
+  # TODO   
   #print "import from $c called \n";
   $ENV{'FHLIB_PORT'} = '49152';
   local $SIG{CHLD} = 'IGNORE';
@@ -40,7 +48,6 @@ import {
 package FHDistributor;
 use strict;
 use warnings;
-use diagnostics;
 use utf8;
 use Scalar::Util qw( blessed refaddr weaken );
 use lib './FHEM';
@@ -54,9 +61,10 @@ setUp {
   #print Data::Dumper->new([$self],[qw(FHMultiplexer)])->Indent(1)->Quotekeys(1)->Dump;
   $self->{NAME} = 'distributor';
   $self->{TYPE} = 'Distributor';
-  $self->{STATE} = 'no definition';
+  $self->{STATE} = 'Initialized';
   $self->{NR} = $main::devcount++;;
   $self->{DEF} = 'no definition';
+  $self->{HOST} = $args{'HOST'};
   $self->{TEMPORARY} = 1;
   #
   $main::modules{'Distributor'}{ORDER} = -1;
@@ -76,7 +84,7 @@ setUp {
     $self->bindEvent($k, $events{$k}); # set default handler
   };
   $self->{'.FHLib'}->{'DEFER'} = 0;
-  $self->{'.FHLib'}->{'DEVICESTORE'} = tie (%main::defs, 'DeviceStorage', $self, \%main::defs);
+  # TODO $self->{'.FHLib'}->{'DEVICESTORE'} = tie (%main::defs, 'DeviceStorage', $self, \%main::defs);
   
   $self->bindEvent('onConnection', 'newConnection');
   # sent by FHIPC if new connections arrive
@@ -87,12 +95,12 @@ setUp {
 sub
 shutdown {
   my ($self) = @_;
-  print "SHUTDOWN !!!!!\n";
+  
   # inform far end about shutdown
   # we switch to blocking conversation cause fhem wont wait otherwise
-  if (my $fh = $self->getElementByName('FHConnector')->Item('FH')) {
-    my $s = syswrite $fh, "{\"cmd\": \"SHUTDOWN\"}\r\n";
-  };
+  #if (my $fh = $self->getElementByName('FHConnector')->Item('FH')) {
+  #  my $s = syswrite $fh, "{\"cmd\": \"SHUTDOWN\"}\r\n";
+  #};
   # wait for ack  
   return;
 };
@@ -125,7 +133,24 @@ connectGate {
 # 
 
 sub
-addTopicSubscription {
+addChannelSubscription {
+  my ($self, $channelName) = @_;
+  my $a = $self->Item('ChannelReceiver')->{$channelName};
+  
+};
+
+sub pushToChannel {
+  my ($self, $channel, $data) = @_;
+  # channel 2 subscriber mapping exit ?
+  #if exists($csm->{$channel}) {
+  #  my $s = $csm->{$channel};
+  #  foreach my $rcv (keys %$s) {
+      # send
+  #  };
+  #} else {
+  #  foreach my $k (keys %$sc) {
+  #  };
+  #};
 };
 
 ###########################################################
@@ -201,7 +226,6 @@ localInternalStored {
 package FHConnector;
 use strict;
 use warnings;
-use diagnostics;
 use utf8;
 use Scalar::Util qw( blessed refaddr weaken );
 use lib './FHEM';
@@ -239,7 +263,6 @@ ConnectionTimeout {
 package ReadingsPair;
 use strict;
 use warnings;
-use diagnostics;
 use utf8;
 use lib './FHEM';
 use Scalar::Util qw( blessed refaddr weaken );
@@ -335,7 +358,6 @@ NEXTKEY {
 package ReadingsStore;
 use strict;
 use warnings;
-use diagnostics;
 use utf8;
 use lib './FHEM';
 use Scalar::Util qw( blessed refaddr weaken );
@@ -428,7 +450,6 @@ DESTROY {
 package LocalDevice;
 use strict;
 use warnings;
-use diagnostics;
 use utf8;
 use lib './FHEM';
 use Scalar::Util qw( blessed refaddr weaken );
@@ -552,7 +573,6 @@ DESTROY {
 package DeviceStorage;
 use strict;
 use warnings;
-use diagnostics;
 use utf8;
 use Scalar::Util qw( blessed refaddr weaken );
 use Tie::Hash;

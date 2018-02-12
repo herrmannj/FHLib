@@ -21,12 +21,27 @@ BEGIN {
 use constant \%constants;
 use base 'Exporter';
 
+
+###############################################################################
+
+package MemWatch;
+use strict;
+use warnings;
+use utf8;
+
+sub new {
+  my ($type) = @_;
+  return bless {}, $type;
+};
+
+sub DESTROY {
+  print "MEMORY FREE \n";
+};
 ###############################################################################
 
 package Core;
 use strict;
 use warnings;
-use diagnostics;
 use utf8;
 use Time::HiRes qw ( time );
 use Scalar::Util qw( blessed refaddr weaken );
@@ -456,7 +471,6 @@ doHandler {
 package CoreAsync;
 use strict;
 use warnings;
-use diagnostics;
 use utf8;
 use lib './FHEM';
 use FHCore qw ( :all );
@@ -548,7 +562,6 @@ doHandler {
 package FHTimer;
 use strict;
 use warnings;
-use diagnostics;
 use utf8;
 use Time::HiRes qw ( time );
 use Scalar::Util qw( weaken );
@@ -567,36 +580,47 @@ setUp {
     $self->mapEvent($k, $args{$k}) if exists $args{$k}; # map if given by args
     $self->bindEvent($k, $events{$k}); # set default handler
   };
-  $self->{'TIMER'} = Time::HiRes::time()+10;
+  
+  #$self->{'TIMER'} = Time::HiRes::time()+10;
+  $self->Item('DELAY') = $args{'DELAY'} if exists $args{'DELAY'};
   return $self;
 };
 
 sub
 start {
-  my ($self) = @_;
-  $self->setTimer($self);
+  my ($self, %args) = @_;
+  # TODO if running restart
+  $self->Item('DELAY') = $args{'DELAY'} if exists $args{'DELAY'};
+  $self->Item('DELAY') //= 0; #/
+  $self->{'TIMER'} = Time::HiRes::time() + $self->Item('DELAY');
+  
+  if ($self->getParent() and $self->getParent()->can('setTimer')) {
+    $self->getParent()->setTimer($self);
+  } else {
+    $self->SysLog(EXT_DEBUG|LOG_ERROR, 'setTimer, no ancestor is capable');
+  };
   return $self;
 };  
   
-sub 
-setTimer {
-  my ($self, $elemTimer) = @_;
-  if ($self->getParent() and $self->getParent()->can('setTimer')) {
-    $self->getParent()->setTimer($elemTimer);
-  } else {
-    $self->SysLog(EXT_DEBUG|LOG_ERROR, 'setTimer, no ancestor is capable');
-  }
-};
+#sub 
+#setTimer {
+#  my ($self, $elemTimer) = @_;
+#  if ($self->getParent() and $self->getParent()->can('setTimer')) {
+#    $self->getParent()->setTimer($elemTimer);
+#  } else {
+#    $self->SysLog(EXT_DEBUG|LOG_ERROR, 'setTimer, no ancestor is capable');
+#  }
+#};
 
 sub
-cancel {
+cancelTimer {
 };
 
 sub
 doTimer {
   my ($self) = @_;
   $self->fireEvent('onTimer');
-  $self->SysLog(EXT_DEBUG|LOG_ERROR, 'timeout');
+  $self->SysLog(EXT_DEBUG|LOG_ERROR, 'timeout %s', $self->getName() );
   $self->getParent()->removeElement($self);
 };
 
@@ -604,7 +628,6 @@ doTimer {
 package Base;
 use strict;
 use warnings;
-use diagnostics;
 use utf8;
 use Time::HiRes qw ( time );
 use Scalar::Util qw( weaken );
@@ -951,32 +974,95 @@ sub setUp {
     $self->mapEvent($k, $args{$k}) if exists $args{$k}; # map if given by args
     $self->bindEvent($k, $events{$k}); # set default handler
   };
-  $self->Item('IP') = $args{'IP'} if exists $args{'IP'};
-  $self->Item('PORT') = $args{'PORT'} if exists $args{'PORT'};
+  $self->Item('INTERFACE') = $args{'INTERFACE'} if exists $args{'INTERFACE'};
+  $self->Item('BAUD') = $args{'BAUD'} if exists $args{'BAUD'};
   return $self;
 };
 
 #http://hasyweb.desy.de/services/computing/perl/node138.html
+#https://www.cmrr.umn.edu/~strupp/serial.html 
 sub connect 
 {
-  my ($self) = @_;
-  $self->SysLog(EXT_DEBUG|LOG_COMMAND, 'connect');
+  my ($self, %args) = @_;
+  
+  my %speed = (
+    '0' => 	0,
+    '50'  => 	1,
+    '75'  => 	2,
+    '110' => 	3,
+    '134' => 	4,
+    '150' => 	5,
+    '200' => 	6,
+    '300' => 	7,
+    '600'	=>  8,
+    '1200'  => 	9,
+    '1800'  => 	10,
+    '2400'  => 	11,
+    '4800'  => 	12,
+    '9600'  => 	13,
+    '19200' => 	14,
+    '38400' => 	15,
+    '57600' => 	4097,
+    '115200'  => 	4098,
+    '230400'  => 	4099,
+    '460800'  => 	4100,
+    '500000'  => 	4101,
+    '576000'  => 	4102,
+    '921600'  => 	4103,
+    '1000000' => 	4104,
+    '1152000' => 	4105,
+    '2000000' => 	4107,
+    '2500000' => 	4108,
+    '3000000' => 	4109,
+    '3500000' => 	4110,
+    '4000000' => 	4111,
+  );
+  
+  $self->Item('INTERFACE') = $args{'INTERFACE'} if exists $args{'INTERFACE'};
+  my $if = $self->Item('INTERFACE') || '';
+  $self->Item('BAUD') = $args{'BAUD'} if exists $args{'BAUD'};
+  my $baud = $self->Item('BAUD') || '38400';
+  my $portSpeed = (exists($speed{$baud}))?$speed{$baud}:0;
+  
+  $self->SysLog(EXT_DEBUG|LOG_COMMAND, 'open serial connection %s %s', $if, $baud);
   my $fh;
-  if (not sysopen ($fh, '/dev/ttyACM3', O_NONBLOCK|O_RDWR)) {
+  if (not sysopen ($fh, $if, O_NONBLOCK|O_RDWR)) {
     $self->fireEvent('onError', {
     });
-    $self->SysLog(EXT_DEBUG|LOG_ERROR, 'open failed');
+    $self->SysLog(EXT_DEBUG|LOG_ERROR, 'open %s failed', $if);
   };
+  POSIX::tcflush( fileno($fh), &POSIX::TCIOFLUSH );
   my $term = POSIX::Termios->new;
   if (not $term->getattr(fileno($fh))) {
     $self->fireEvent('onError', {
     });
     $self->SysLog(EXT_DEBUG|LOG_ERROR, 'getattr failed');
+    return;
   };
-  $term->setospeed( 4097 );
-  $term->setispeed( 4097 );
+  $term->setospeed( $portSpeed );
+  $term->setispeed( $portSpeed );
+  
+  #my $c_iflag = $term->getiflag();
+  #$c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
+  #$term->setiflag ( $c_iflag );
+  $term->setiflag( &POSIX::IGNBRK ); 
+  
+  #my $c_oflag = $term->getoflag();
+  #$c_oflag &= ~OPOST;
+  $term->setoflag( 0 );
+  
+  #my $c_lflag = $term->getlflag();
+  #print "LFLAG I". $c_lflag +0 . "\n";
+  #$c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
+  #print "LFLAG O". unpack("C", $c_lflag) . "\n";
+  $term->setlflag( 0 );
+  
+  my $c_cflag = $term->getcflag();
+  $c_cflag &= ~(CSIZE | PARENB | CSTOPB);
+  $c_cflag |= CS8;
+  $term->setcflag( $c_cflag );
+  
   $term->setattr( fileno($fh), &POSIX::TCSAFLUSH );
-  POSIX::tcflush( fileno($fh), &POSIX::TCIOFLUSH );
   $self->fireEvent('onConnect', {
     'FH'  => $fh,
   });
@@ -1058,7 +1144,7 @@ setUp {
   
   $self->Item('INBUFFER') = '';
   $self->Item('OUTBUFFER') = '';
-  $self->Item('DELIMITER') = '\r\n';
+  $self->Item('DELIMITER') = "\r\n";
   $self->{FH} = $args{FH};
   $self->{FD} = $args{FH}->fileno() if $args{FH};
   $self->nonblock($self->{FH}); # handle vs descriptor
@@ -1143,8 +1229,10 @@ defaultRawRead {
   } else {
     $$fb .= $msg;
   }
+  #use FHCore::MemWatch -norequire;
   $self->fireEvent('onRead', {
     'INBUFFER' => \$self->Item('INBUFFER'),
+    #'D' => new MemWatch(),
   });
 }
 
@@ -1152,10 +1240,11 @@ sub
 defaultRead {
   my ($self, $event) = @_;
   my $fb = $event->{INBUFFER};
-  my $d = $self->Item('DELIMITER');
   
-  # tricky regex to keep respect to escaped delimiter
-  #if ($$fb and ($$fb =~ /(.*?(?<!\\)(?:\\\\)*)$d(.*)/s)) {
+  #my @ascii = unpack("C*", $$fb);
+  #print join ':', @ascii;
+  #print " (END FB) \n";
+  my $d = $self->Item('DELIMITER');
   if ($$fb and ($$fb =~ /(.*)$d(.*)/s)) {
     my $msg = $1; #msg
     $$fb = $2; #remainder
@@ -1200,8 +1289,8 @@ defaultRawWrite {
   my ($self, $event) = @_;
   my $fh = $event->{'FH'};
   my $fb = $event->{'OUTBUFFER'};
-  my $dbgStr = unpack("H*", $$fb);
-  print "fb: $dbgStr \n";
+  my $dbgStr = join(' ', unpack("(A2)*", unpack("H*", $$fb)));
+  $self->SysLog(EXT_DEBUG|LOG_ERROR, 'OUTBUFFER RAW: %s', $dbgStr);
   my $s = syswrite $fh, $$fb;
   print "send $s\n";  
   substr ($$fb, 0, $s) = '';

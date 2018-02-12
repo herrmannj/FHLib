@@ -5,7 +5,7 @@ use utf8;
 use Scalar::Util qw( blessed refaddr weaken );
 use lib './FHEM';
 use FHCore qw ( :all );
-#use FHLayer qw( Test );
+use FHLayer qw( Test noThread );
 use parent -norequire, qw ( Base );
 
 sub
@@ -89,15 +89,11 @@ Init {
         my $o = new $name($hash);
         %main::ntfyHash = ();
         { no strict 'refs'; 
-          print "create loader $name ::subscribe \n";
-          *{$name.'::subscribe'} = sub {
-            my ($channel, $event) = @_;
-            $o->_subscribe($channel, $event);
-          };
-          *{$name.'::readingsSingleUpdate'} = sub {
-            my ($self, $reading, $value, $dotrigger)= @_;
-            main::readingsSingleUpdate($hash, $reading, $value, $dotrigger);
-          };
+          #print "create loader $name ::subscribe \n";
+          #*{$name.'::subscribe'} = sub {
+          #  my ($channel, $event) = @_;
+          #  $o->_subscribe($channel, $event);
+          #};
         };
         # consume options
         while ($options && ((my $option, $options) = split /\s/, $options, 2)) {
@@ -120,8 +116,13 @@ Init {
       #  print "notify $hash->{NAME} ... \n";
       #};
       *{'main::'.$name.'_Set'}      = $_Set;
-      *{'main::'.$name.'_fwDetail'} = $_fwDetail;       
-    }
+      *{'main::'.$name.'_fwDetail'} = $_fwDetail;
+      # support
+      *{$name.'::readingsSingleUpdate'} = sub {
+        my ($self, $reading, $value, $dotrigger)= @_;
+        main::readingsSingleUpdate($hash, $reading, $value, $dotrigger);
+      };
+    };
     return;
   };
   {no strict 'refs'; *{'main::'.$name.'_Initialize'} = $_Init;}
@@ -144,6 +145,7 @@ sub
 doSysLog {
   my ($self, $verbose, $message, @args) = @_;
   $verbose &= 0x0F;
+  #$verbose = 0;
   main::Log3($self, $verbose, sprintf($message, @args));
   return;
 }
@@ -242,7 +244,7 @@ _eventFn {
   foreach my $event (@{$ntfyDev->{CHANGED}}) {
     my @e = split(' ', $event);
     next unless defined($e[0]);
-    $self->SysLog(LOG_COMMAND, 'EVENTFN %s', $ntfyDev->{NAME});
+    $self->SysLog(LOG_DEBUG, 'event, sender %s, event: %s', $ntfyDev->{NAME}, $event);
     if ($ntfyDev->{TYPE} eq 'Global') {
       # system events
       if ($e[0] eq 'INITIALIZED') {
